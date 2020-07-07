@@ -1,3 +1,30 @@
+/*
+***ORIGINAL LICENSE***
+
+This software, the ideas and concepts is Copyright (c) David Bird 2014 and beyond.
+
+All rights to this software are reserved.
+ 
+It is prohibited to redistribute or reproduce of any part or all of the software contents in any form other than the following:
+
+ 1. You may print or download to a local hard disk extracts for your personal and non-commercial use only.
+
+ 2. You may copy the content to individual third parties for their personal use, but only if you acknowledge the author David Bird as the source of the material.
+
+ 3. You may not, except with my express written permission, distribute or commercially exploit the content.
+
+ 4. You may not transmit it or store it in any other website or other form of electronic retrieval system for commercial purposes.
+
+ 5. You MUST include all of this copyright and permission notice ('as annotated') and this shall be included in all copies or substantial portions of the software and where the software use is visible to an end-user.
+ 
+THE SOFTWARE IS PROVIDED "AS IS" FOR PRIVATE USE ONLY, IT IS NOT FOR COMMERCIAL USE IN WHOLE OR PART OR CONCEPT.
+
+FOR PERSONAL USE IT IS SUPPLIED WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+// Added by tobozo?
 /* ESP8266/32 Audio Spectrum Analyser on an SSD1306/SH1106 Display
  * The MIT License (MIT) Copyright (c) 2017 by David Bird. 
  * The formulation and display of an AUdio Spectrum using an ESp8266 or ESP32 and SSD1306 or SH1106 OLED Display using a Fast Fourier Transform
@@ -13,9 +40,6 @@
  * See more at http://dsbird.org.uk 
 */
 
-// Modified on 2020.07.07 by KIRA Ryouta
-// https://github.com/KKQ-KKQ/m5stickc-audiospectrum
-
 // M5StickC Audio Spectrum             : 2019.06.01 : macsbug
 //  https://macsbug.wordpress.com/2019/06/01/
 // Audio Spectrum Display with M5STACK : 2017.12.31 : macsbug
@@ -24,6 +48,13 @@
 // https://github.com/G6EJD/ESP32-8266-Audio-Spectrum-Display
 // https://github.com/kosme/arduinoFFT
  
+ 
+// David Bird (https://github.com/G6EJD/ESP32-8266-Audio-Spectrum-Display)
+// tobozo (https://github.com/tobozo/ESP32-Audio-Spectrum-Waveform-Display)
+// macsbug (https://macsbug.wordpress.com/)
+// KIRA Ryouta (https://github.com/KKQ-KKQ/m5stickc-audiospectrum)
+
+
 #pragma GCC optimize ("O3")
 #include <arduinoFFT.h>
 #include <M5StickC.h>
