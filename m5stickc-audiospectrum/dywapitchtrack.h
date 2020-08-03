@@ -81,7 +81,7 @@
 extern "C" {
 #endif
 
-#define DYWAPT_FLOAT float
+#define DYWAPT_FLOAT double
 
 // structure to hold tracking data
 typedef struct _dywapitchtracker {
