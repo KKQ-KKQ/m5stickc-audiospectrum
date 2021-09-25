@@ -11,4 +11,3 @@ For Arduino IDE.
 
 ## Required Libraries:
 - M5StickC
-- arduinoFFT

@@ -54,13 +54,13 @@ SOFTWARE.
 
 
 #pragma GCC optimize ("O3")
-#include <arduinoFFT.h>
 #include <M5StickC.h>
 #include <driver/i2s.h>
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
 #include "dywapitchtrack.h"
+#include "fix_fft.h"
 
 #define PIN_CLK  0
 #define PIN_DATA 34
@@ -72,9 +72,11 @@ SOFTWARE.
 #define BANDS_WIDTH ( TFT_WIDTH / BANDS )
 #define BANDS_PADDING 8
 #define BAR_WIDTH ( BANDS_WIDTH - BANDS_PADDING )
-#define ATTENUATION 2.5
-#define NOISE_FLOOR 316.227766017 // pow(10, ATTENUATION)
-#define MAGNIFY 23
+#define NOISE_FLOOR 1
+#define AMPLIFIER (1 << 2)
+#define MAGNIFY 3
+#define RSHIFT 13
+#define RSHIFT2 1
 #define OSC_NOISEFLOOR 100
 #define OSC_SAMPLES DYWAPT_SAMPLESIZE
 #define OSC_SKIPCOUNT (OSC_SAMPLES/SAMPLES)
@@ -82,8 +84,6 @@ SOFTWARE.
 
 //#define MAXBUFSIZE (2*SAMPLES)
 #define MAXBUFSIZE OSC_SAMPLES
-
-arduinoFFT FFT = arduinoFFT();  
 
 struct eqBand {
   const char *freqname;
@@ -101,8 +101,8 @@ enum : uint8_t {
 
 static uint8_t runmode = 0;
 
-static bool semaphore = false;
-static bool needinit = true;
+static volatile bool semaphore = false;
+static volatile bool needinit = true;
 
 static eqBand audiospectrum[BANDS] = {
   // freqname,peak,lastpeak,lastval,
@@ -116,11 +116,12 @@ static eqBand audiospectrum[BANDS] = {
   { "16k", 0 }
 };
  
-static double vTemp[2][MAXBUFSIZE];
+static int vTemp[2][MAXBUFSIZE];
 static uint8_t curbuf = 0;
 static uint16_t colormap[TFT_HEIGHT];//color palette for the band meter(pre-fill in setup)
 
 static dywapitchtracker pitchTracker;
+static TFT_eSprite sprite(&M5.Lcd);
 
 static int bufposcount = 0;
 
@@ -134,7 +135,7 @@ static int skipcount = 0;
 void i2sInit(){
    i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
-    .sample_rate =  44100,
+    .sample_rate =  DYWAPT_SAMPLERATE,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT, //is fixed at 12bit,stereo,MSB
     .channel_format = I2S_CHANNEL_FMT_ALL_RIGHT,
     .communication_format = I2S_COMM_FORMAT_I2S,
@@ -149,23 +150,26 @@ void i2sInit(){
    pin_config.data_in_num  = PIN_DATA; 
    i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
    i2s_set_pin(I2S_NUM_0, &pin_config);
-   i2s_set_clk(I2S_NUM_0, 44100,I2S_BITS_PER_SAMPLE_16BIT,I2S_CHANNEL_MONO);
+   i2s_set_clk(I2S_NUM_0, DYWAPT_SAMPLERATE, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
 }
  
 void setup() {
   M5.begin();
+  setCpuFrequencyMhz(80);
   M5.Lcd.setRotation(1);
   M5.Lcd.fillScreen(BLACK);
-  M5.Lcd.setTextSize(1);
+
+  sprite.createSprite(TFT_WIDTH, TFT_HEIGHT);
+  sprite.setTextSize(1);
 
   i2sInit();
  
   for(uint8_t i=0;i<TFT_HEIGHT;i++) {
     //colormap[i] = M5.Lcd.color565(TFT_HEIGHT-i*.5,i*1.1,0); //RGB
     //colormap[i] = M5.Lcd.color565(TFT_HEIGHT-i*4.4,i*2.5,0);//RGB:rev macsbug
-    double r = TFT_HEIGHT - i;
-    double g = i;
-    double mag = (r > g)? 255./r : 255./g;
+    float r = TFT_HEIGHT - i;
+    float g = i;
+    float mag = (r > g)? 255./r : 255./g;
     r *= mag;
     g *= mag;
     colormap[i] = M5.Lcd.color565((uint8_t)r,(uint8_t)g,0); // Modified by KKQ-KKQ
@@ -188,37 +192,42 @@ void initMode() {
 
     case ModeOscilloscope:
       {
-        M5.Lcd.setTextColor(GREEN);
+        sprite.setTextColor(GREEN);
         dywapitch_inittracking(&pitchTracker);
       }
       break;
 
     case ModeTuner:
-      M5.Lcd.setTextSize(1);
+      sprite.setTextSize(1);
       break;
   }
 }
 
 void showSpectrumBars(){
-  double *vTemp_ = vTemp[curbuf^1];
+  int *vTemp_ = vTemp[curbuf^1];
 
-  FFT.Windowing(vTemp_, SAMPLES, FFT_WIN_TYP_HAMMING, FFT_FORWARD);
-  FFT.Compute(vTemp_, vTemp_ + SAMPLES, SAMPLES, FFT_FORWARD);
-  FFT.ComplexToMagnitude(vTemp_, vTemp_ + SAMPLES, SAMPLES);
+  Fixed15FFT::apply_window(vTemp_);
+  Fixed15FFT::calc_fft(vTemp_, vTemp_ + SAMPLES);
 
-  double values[BANDS] = {};
+  int values[BANDS] = {};
   for (int i = 2; i < (SAMPLES/2); i++){ 
     // Don't use sample 0 and only first SAMPLES/2 are usable. 
     // Each array element represents a frequency and its value the amplitude.
-    if (vTemp_[i] > NOISE_FLOOR) {
+    int ampsq = vTemp_[i] * vTemp_[i] + vTemp_[i + SAMPLES] * vTemp_[i + SAMPLES];
+    if (ampsq > NOISE_FLOOR) {
       byte bandNum = getBand(i);
-      if(bandNum != 8 && vTemp_[i] > values[bandNum]) {
-        values[bandNum] = vTemp_[i];
+      if(bandNum != 8 && ampsq > values[bandNum]) {
+        values[bandNum] = ampsq;
       }
     }
   }
   for (byte band = 0; band < BANDS; band++) {
-    displayBand(band, (log10(values[band]) - ATTENUATION) * MAGNIFY);
+    int log2 = FIX_LOG2<15-RSHIFT>(values[band]);
+    if (log2 > -AMPLIFIER) {
+      displayBand(band, ((log2 + AMPLIFIER) * MAGNIFY) >> RSHIFT2);
+    } else {
+      displayBand(band, 0);
+    }
   }
   //long vnow = millis();
   for (byte band = 0; band < BANDS; band++) {
@@ -244,7 +253,6 @@ void showSpectrumBars(){
 void displayBand(int band, int dsize){
   uint16_t hpos = BANDS_WIDTH*band + (BANDS_PADDING/2);
   if (dsize < 0) dsize = 0;
-#define dmax 200
   if(dsize>TFT_HEIGHT-10) {
     dsize = TFT_HEIGHT-10; // leave some hspace for text
   }
@@ -253,7 +261,6 @@ void displayBand(int band, int dsize){
     M5.Lcd.fillRect(hpos, TFT_HEIGHT-audiospectrum[band].lastval,
                     BAR_WIDTH, audiospectrum[band].lastval - dsize,BLACK);
   }
-  if (dsize > dmax) dsize = dmax;
   for (int s = 0; s <= dsize; s=s+4){
     uint16_t ypos = TFT_HEIGHT - s;
     M5.Lcd.drawFastHLine(hpos, ypos, BAR_WIDTH, colormap[ypos]);
@@ -274,31 +281,31 @@ byte getBand(int i) {
   return 8;
 }
 
-double calcNumSamples(double f) {
+float calcNumSamples(float f) {
   if (f == 0.0) return SAMPLES/2;
-  double s = (double)(44100 * 2) / f;
-  if (s > (double)OSC_SAMPLES) {
+  float s = (float)(DYWAPT_SAMPLERATE * 2) / f;
+  if (s > (float)OSC_SAMPLES) {
     do {
       s *= 0.5;
-    } while (s > (double)OSC_SAMPLES);
+    } while (s > (float)OSC_SAMPLES);
   }
   return s;
 }
 
-void showFreq(double freq) {
+void showFreq(float freq) {
   if (freq > 0) {
     char strbuf[16];
     sprintf(strbuf, "%8.2fHz", freq);
-    M5.Lcd.drawString(strbuf, 0, 0, 1);
-    double fnote = log2(freq)*12 - 36.376316562;
-    int note = fnote + 0.5;
+    sprite.drawString(strbuf, 0, 0, 1);
+    float fnote = log2(freq)*12 - 36.376316562f;
+    int note = fnote + 0.5f;
     if (note >= 0) {
-      M5.Lcd.setCursor(TFT_WIDTH/2 - 4, 0);
-      M5.Lcd.print(notestr[note % 12]);
-      M5.Lcd.print(note / 12 - 1);
-      double cent = (fnote - note) * 100;
+      sprite.setCursor(TFT_WIDTH/2 - 4, 0);
+      sprite.print(notestr[note % 12]);
+      sprite.print(note / 12 - 1);
+      float cent = (fnote - note) * 100;
       sprintf(strbuf, "%.1fcents", cent);
-      M5.Lcd.drawRightString(strbuf, TFT_WIDTH, 0, 1);
+      sprite.drawRightString(strbuf, TFT_WIDTH, 0, 1);
     }
   }
 }
@@ -307,16 +314,16 @@ void showOscilloscope()
 {
   uint16_t i,j;
   uint16_t *oscbuf_ = oscbuf[curbuf^1];
-  double *vTemp_ = vTemp[curbuf ^ 1];
-  double freq = dywapitch_computepitch(&pitchTracker, vTemp_);
+  int *vTemp_ = vTemp[curbuf ^ 1];
+  float freq = dywapitch_computepitch(&pitchTracker, vTemp_);
   if (skipcount < OSC_EXTRASKIP) {
     ++skipcount;
     return;
   }
   skipcount = 0;
   uint16_t s = calcNumSamples(freq);
-  double mx = (double)TFT_WIDTH / s;
-  double my;
+  float mx = (float)TFT_WIDTH / s;
+  float my;
   uint16_t maxV = 0;
   uint16_t minV = 65535;
   for (i = 0; i < s; ++i) {
@@ -324,28 +331,28 @@ void showOscilloscope()
     if (minV > oscbuf_[i]) minV = oscbuf_[i];
   }
   if (maxV - minV > OSC_NOISEFLOOR) {
-    my = (double)(TFT_HEIGHT-10) / (maxV - minV);
+    my = (float)(TFT_HEIGHT-10) / (maxV - minV);
   }
   else {
-    my = (double)(TFT_HEIGHT-10) / OSC_NOISEFLOOR;
+    my = (float)(TFT_HEIGHT-10) / OSC_NOISEFLOOR;
     minV = (((int)maxV + (int)minV) >> 1) - OSC_NOISEFLOOR/2;
   }
-  M5.Lcd.fillRect(0, 0,
-                  TFT_WIDTH, TFT_HEIGHT, BLACK);
+  sprite.fillSprite(BLACK);
   uint16_t y = TFT_HEIGHT - (oscbuf_[0] - minV) * my;
   for (i = 0; i < s; ++i) {
     uint16_t y2 = TFT_HEIGHT - (oscbuf_[i] - minV) * my;
-    M5.Lcd.drawLine((uint16_t)(i * mx), y,
+    sprite.drawLine((uint16_t)(i * mx), y,
                     (uint16_t)((i+1)*mx), y2, LIGHTGREY);
     y = y2;
   }
   showFreq(freq);
+  sprite.pushSprite(0,0);
 }
 
 void showTuner() {
-  double *vTemp_ = vTemp[curbuf ^ 1];
-  double freq = dywapitch_computepitch(&pitchTracker, vTemp_);
-  double fnote;
+  int *vTemp_ = vTemp[curbuf ^ 1];
+  float freq = dywapitch_computepitch(&pitchTracker, vTemp_);
+  float fnote;
   int note;
   if (freq > 0) {
     fnote = log2(freq)*12 - 36.376316562;
@@ -356,7 +363,7 @@ void showTuner() {
   }
   uint32_t bgcolor, fgcolor;
   if (note >= 0) {
-    double cent = (fnote - note) * 100;
+    float cent = (fnote - note) * 100;
     if (abs(cent) < 2.) {
       bgcolor = GREEN;
       fgcolor = BLACK;
@@ -365,20 +372,22 @@ void showTuner() {
       bgcolor = DARKGREY;
       fgcolor = BLACK;
     }
-    M5.Lcd.fillRect(0, 0, TFT_WIDTH, TFT_HEIGHT, bgcolor);
-    M5.Lcd.setTextColor(fgcolor);
-    M5.Lcd.drawRect(2, 36, TFT_WIDTH-3, TFT_HEIGHT-40, fgcolor);
-    M5.Lcd.drawLine(TFT_WIDTH/2 + 1, 36, TFT_WIDTH/2 + 1, TFT_HEIGHT - 4, fgcolor);
-    M5.Lcd.fillCircle(((double)TFT_WIDTH/2 + 1) + cent * ((double)(TFT_WIDTH-3)/100), (TFT_HEIGHT+34)/2, 5, fgcolor);
+    sprite.fillSprite(bgcolor);
+    sprite.fillRect(0, 0, TFT_WIDTH, TFT_HEIGHT, bgcolor);
+    sprite.setTextColor(fgcolor);
+    sprite.drawRect(2, 36, TFT_WIDTH-3, TFT_HEIGHT-40, fgcolor);
+    sprite.drawRect(TFT_WIDTH/2 + 1, 36, 1, TFT_HEIGHT - 40, fgcolor);
+    sprite.fillCircle(((float)TFT_WIDTH/2 + 1) + cent * ((float)(TFT_WIDTH-3)/100), (TFT_HEIGHT+34)/2, 5, fgcolor);
     char strbuf[8];
     sprintf(strbuf, "%s%d", notestr[note % 12], note / 12 - 1);
-    M5.Lcd.drawCentreString(strbuf, TFT_WIDTH/2, 3, 4);
+    sprite.drawCentreString(strbuf, TFT_WIDTH/2, 3, 4);
   }
   else {
-    M5.Lcd.fillRect(0, 0, TFT_WIDTH, TFT_HEIGHT, DARKGREY);
-    M5.Lcd.drawRect(2, 36, TFT_WIDTH-3, TFT_HEIGHT-40, BLACK);
-    M5.Lcd.drawLine(TFT_WIDTH/2 + 1, 36, TFT_WIDTH/2 + 1, TFT_HEIGHT - 4, BLACK);
+    sprite.fillSprite(DARKGREY);
+    sprite.drawRect(2, 36, TFT_WIDTH-3, TFT_HEIGHT-40, BLACK);
+    sprite.drawLine(TFT_WIDTH/2 + 1, 36, TFT_WIDTH/2 + 1, TFT_HEIGHT - 4, BLACK);
   }
+  sprite.pushSprite(0,0);
 }
 
 void looptask(void *) {

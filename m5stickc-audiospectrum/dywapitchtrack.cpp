@@ -32,10 +32,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h> // for memset
-
-#define samplecount DYWAPT_SAMPLESIZE
-
-extern "C" {
+#include <limits.h>
+#include <type_traits>
 
 //**********************
 //       Utils
@@ -108,41 +106,53 @@ static int distances[DYWAPT_SAMPLESIZE];
 static int mins[DYWAPT_SAMPLESIZE];
 static int maxs[DYWAPT_SAMPLESIZE];
 
-DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
+DYWAPT_FLOAT _dywapitch_computeWaveletPitch(DYWAPT_INPUT *sam) {
 	DYWAPT_FLOAT pitchF = 0.0f;
 	
 	int i, j;
-	DYWAPT_FLOAT si, si1;
+	DYWAPT_TEMP si, si1;
 	
-	int curSamNb = samplecount;	
+	int curSamNb = DYWAPT_SAMPLESIZE;
 	int nbMins, nbMaxs;
 	
 	// algorithm parameters
 #define	maxFLWTlevels 6
-#define	maxF 22050.f
+#define	maxF (DYWAPT_SAMPLERATE/2)
 #define differenceLevelsN 3
+
 #define maximaThresholdRatio 0.75f
+#define maximaThresholdRatioMul 3
+#define maximaThresholdRatioRSHIFT 2
 	
-	DYWAPT_FLOAT ampltitudeThreshold;  
-	DYWAPT_FLOAT theDC = 0.0f;
+	DYWAPT_TEMP ampltitudeThreshold;
+	DYWAPT_TEMP theDC = 0;
 	
 	{ // compute ampltitudeThreshold and theDC
 		//first compute the DC and maxAMplitude
-		DYWAPT_FLOAT maxValue = -1e20;
-		DYWAPT_FLOAT minValue = 1e20;
-		for (i = 0; i < samplecount;i++) {
+		DYWAPT_TEMP maxValue = DYWAPT_TEMPMIN;
+		DYWAPT_TEMP minValue = DYWAPT_TEMPMAX;
+		for (i = 0; i < DYWAPT_SAMPLESIZE;i++) {
 			si = sam[i];
 			theDC = theDC + si;
 			if (si > maxValue) maxValue = si;
 			if (si < minValue) minValue = si;
 		}
-		theDC = theDC*(1./samplecount);
+    if (std::is_integral<DYWAPT_TEMP>::value) {
+      theDC = (int)theDC >> DYWAPT_SAMPLESIZELOG2;
+    }
+    else {
+      theDC = theDC*(1./DYWAPT_SAMPLESIZE);
+    }
 		maxValue = maxValue - theDC;
 		minValue = minValue - theDC;
-		DYWAPT_FLOAT amplitudeMax = (maxValue > -minValue ? maxValue : -minValue);
+		DYWAPT_TEMP amplitudeMax = (maxValue > -minValue ? maxValue : -minValue);
 		
-		ampltitudeThreshold = amplitudeMax*maximaThresholdRatio;
-		//asLog("dywapitch theDC=%f ampltitudeThreshold=%f\n", theDC, ampltitudeThreshold);
+    if (std::is_integral<DYWAPT_TEMP>::value) {
+      ampltitudeThreshold = (int)amplitudeMax * maximaThresholdRatioMul >> maximaThresholdRatioRSHIFT;
+    }
+    else {
+      ampltitudeThreshold = amplitudeMax*maximaThresholdRatio;    
+    }
 		
 	}
 	
@@ -154,7 +164,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 	while(1) {
 		
 		// delta
-		delta = 44100.f/(_2power(curLevel)*maxF);
+		delta = (DYWAPT_SAMPLERATE / maxF) >> curLevel;
 		//("dywapitch doing level=%ld delta=%ld\n", curLevel, delta);
 		
 		if (curSamNb < 2) goto cleanup;
@@ -162,7 +172,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 		// compute the first maximums and minumums after zero-crossing
 		// store if greater than the min threshold
 		// and if at a greater distance than delta
-		DYWAPT_FLOAT dv, previousDV = -1000;
+		DYWAPT_TEMP dv, previousDV = -1000;
 		nbMins = nbMaxs = 0;   
 		int lastMinIndex = -1000000;
 		int lastmaxIndex = -1000000;
@@ -182,7 +192,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 				
 				if (findMin && previousDV < 0 && dv >= 0) { 
 					// minimum
-					if (fabs(si1) >= ampltitudeThreshold) {
+					if (abs(si1) >= ampltitudeThreshold) {
 						if (i - 1 > lastMinIndex + delta) {
 							mins[nbMins++] = i - 1;
 							lastMinIndex = i - 1;
@@ -201,7 +211,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 				
 				if (findMax && previousDV > 0 && dv <= 0) {
 					// maximum
-					if (fabs(si1) >= ampltitudeThreshold) {
+					if (abs(si1) >= ampltitudeThreshold) {
 						if (i -1 > lastmaxIndex + delta) {
 							maxs[nbMaxs++] = i - 1;
 							lastmaxIndex = i - 1;
@@ -232,7 +242,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 		// maxs = [5, 20, 100,...]
 		// compute distances
 		int d;
-		memset(distances, 0, samplecount*sizeof(int));
+		memset(distances, 0, DYWAPT_SAMPLESIZE*sizeof(int));
 		for (i = 0 ; i < nbMins ; i++) {
 			for (j = 1; j < differenceLevelsN; j++) {
 				if (i+j < nbMins) {
@@ -277,7 +287,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 		DYWAPT_FLOAT distAvg = 0.0;
 		DYWAPT_FLOAT nbDists = 0;
 		for (j = -delta ; j <= delta ; j++) {
-			if (bestDistance+j >=0 && bestDistance+j < samplecount) {
+			if (bestDistance+j >=0 && bestDistance+j < DYWAPT_SAMPLESIZE) {
 				int nbDist = distances[bestDistance+j];
 				if (nbDist > 0) {
 					nbDists += nbDist;
@@ -296,7 +306,7 @@ DYWAPT_FLOAT _dywapitch_computeWaveletPitch(double * sam) {
 				//if DEBUGG then put "similarity="&similarity&&"delta="&delta&&"ok"
  				//asLog("dywapitch similarity=%f OK !\n", similarity);
 				// two consecutive similar mode distances : ok !
-				pitchF = 44100./(_2power(curLevel-1)*curModeDistance);
+				pitchF = (DYWAPT_FLOAT)DYWAPT_SAMPLERATE/(_2power(curLevel-1)*curModeDistance);
 				goto cleanup;
 			}
 			//if DEBUGG then put "similarity="&similarity&&"delta="&delta&&"not"
@@ -432,9 +442,7 @@ void dywapitch_inittracking(dywapitchtracker *pitchtracker) {
 	pitchtracker->_pitchConfidence = -1;
 }
 
-DYWAPT_FLOAT dywapitch_computepitch(dywapitchtracker *pitchtracker, double * samples) {
+DYWAPT_FLOAT dywapitch_computepitch(dywapitchtracker *pitchtracker, DYWAPT_INPUT *samples) {
 	DYWAPT_FLOAT raw_pitch = _dywapitch_computeWaveletPitch(samples);
 	return _dywapitch_dynamicprocess(pitchtracker, raw_pitch);
-}
-
 }

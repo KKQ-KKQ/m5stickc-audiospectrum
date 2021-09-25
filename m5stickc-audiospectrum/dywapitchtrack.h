@@ -77,11 +77,26 @@
 #ifndef dywapitchtrack__H
 #define dywapitchtrack__H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#define DYWAPT_FLOAT double
+#define DYWAPT_FLOAT float
+#define DYWAPT_INPUT int
+#define DYWAPT_TEMP int
+#define DYWAPT_TEMPMAX (INT_MAX)
+#define DYWAPT_TEMPMIN (INT_MIN)
+#define DYWAPT_SAMPLESIZE 2048
+#define DYWAPT_SAMPLESIZELOG2 11
+#define DYWAPT_SAMPLERATE 44100
+/*
+#define DYWAPT_INPUT short
+#define DYWAPT_TEMP int
+#define DYWAPT_TEMPMAX (INT_MAX)
+#define DYWAPT_TEMPMIN (INT_MIN)
+ */
+/*
+#define DYWAPT_INPUT float
+#define DYWAPT_TEMP float
+#define DYWAPT_TEMPMAX (MAXFLOAT)
+#define DYWAPT_TEMPMIN (-MAXFLOAT)
+ */
 
 // structure to hold tracking data
 typedef struct _dywapitchtracker {
@@ -99,12 +114,7 @@ void dywapitch_inittracking(dywapitchtracker *pitchtracker);
 
 // computes the pitch. Pass the inited dywapitchtracker structure
 // samples : a pointer to the sample buffer
-#define DYWAPT_SAMPLESIZE 2048
 // return 0.0 if no pitch was found (sound too low, noise, etc..)
-DYWAPT_FLOAT dywapitch_computepitch(dywapitchtracker *pitchtracker, double * samples);
-
-#ifdef __cplusplus
-} // extern "C"
-#endif
+DYWAPT_FLOAT dywapitch_computepitch(dywapitchtracker *pitchtracker, DYWAPT_INPUT *samples);
 
 #endif
