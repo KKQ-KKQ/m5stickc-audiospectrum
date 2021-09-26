@@ -80,7 +80,7 @@ SOFTWARE.
 #define OSC_NOISEFLOOR 100
 #define OSC_SAMPLES DYWAPT_SAMPLESIZE
 #define OSC_SKIPCOUNT (OSC_SAMPLES/SAMPLES)
-#define OSC_EXTRASKIP 1
+#define OSC_EXTRASKIP 0
 
 //#define MAXBUFSIZE (2*SAMPLES)
 #define MAXBUFSIZE OSC_SAMPLES
@@ -130,7 +130,9 @@ static const char *notestr[12] = {
 };
 
 static uint16_t oscbuf[2][OSC_SAMPLES];
+#if OSC_EXTRASKIP > 0
 static int skipcount = 0;
+#endif
 
 void i2sInit(){
    i2s_config_t i2s_config = {
@@ -174,7 +176,9 @@ void setup() {
     g *= mag;
     colormap[i] = M5.Lcd.color565((uint8_t)r,(uint8_t)g,0); // Modified by KKQ-KKQ
   }
-  xTaskCreatePinnedToCore(looptask,"calctask",32768,NULL,1,NULL,1);
+
+  int core = 1 - xPortGetCoreID();
+  xTaskCreatePinnedToCore(looptask,"calctask",32768,NULL,1,NULL,core);
 }
 
 void initMode() {
@@ -316,19 +320,25 @@ void showOscilloscope()
   uint16_t *oscbuf_ = oscbuf[curbuf^1];
   int *vTemp_ = vTemp[curbuf ^ 1];
   float freq = dywapitch_computepitch(&pitchTracker, vTemp_);
+#if OSC_EXTRASKIP > 0
   if (skipcount < OSC_EXTRASKIP) {
     ++skipcount;
     return;
   }
   skipcount = 0;
+#endif
   uint16_t s = calcNumSamples(freq);
   float mx = (float)TFT_WIDTH / s;
   float my;
   uint16_t maxV = 0;
   uint16_t minV = 65535;
+  uint16_t offset = 0;
   for (i = 0; i < s; ++i) {
     if (maxV < oscbuf_[i]) maxV = oscbuf_[i];
-    if (minV > oscbuf_[i]) minV = oscbuf_[i];
+    if (minV > oscbuf_[i]) {
+      minV = oscbuf_[i];
+      if (i + s <= OSC_SAMPLES) offset = i;
+    }
   }
   if (maxV - minV > OSC_NOISEFLOOR) {
     my = (float)(TFT_HEIGHT-10) / (maxV - minV);
@@ -338,11 +348,11 @@ void showOscilloscope()
     minV = (((int)maxV + (int)minV) >> 1) - OSC_NOISEFLOOR/2;
   }
   sprite.fillSprite(BLACK);
-  uint16_t y = TFT_HEIGHT - (oscbuf_[0] - minV) * my;
-  for (i = 0; i < s; ++i) {
-    uint16_t y2 = TFT_HEIGHT - (oscbuf_[i] - minV) * my;
-    sprite.drawLine((uint16_t)(i * mx), y,
-                    (uint16_t)((i+1)*mx), y2, LIGHTGREY);
+  uint16_t y = TFT_HEIGHT - (oscbuf_[offset] - minV) * my;
+  for (i = 1; i < s; ++i) {
+    uint16_t y2 = TFT_HEIGHT - (oscbuf_[offset + i] - minV) * my;
+    sprite.drawLine((uint16_t)((i-1) * mx), y,
+                    (uint16_t)(i * mx), y2, LIGHTGREY);
     y = y2;
   }
   showFreq(freq);
