@@ -440,7 +440,8 @@ void loop() {
   uint16_t i,j;
   j = bufposcount * SAMPLES;
   uint16_t *adcBuffer = &oscbuf[curbuf][j];
-  i2s_read_bytes(I2S_NUM_0,(char*)adcBuffer,READ_LEN,500);
+  size_t bytesread;
+  i2s_read(I2S_NUM_0,(char*)adcBuffer,READ_LEN,&bytesread,portMAX_DELAY);
   int32_t dc = 0;
   for (int i = 0; i < SAMPLES; ++i) {
     dc += adcBuffer[i];
